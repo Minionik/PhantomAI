@@ -1,0 +1,31 @@
+# Environment — never commit real API keys
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Generated scan reports (template.html is kept, generated reports are not)
+reports/report_*.html
+
+# Temporary wordlists created during scans
+*.tmp
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code internal config
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

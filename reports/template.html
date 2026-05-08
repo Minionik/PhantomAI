@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pentest Report — {{ target }}</title>
+<style>
+  :root {
+    --critical: #dc2626; --high: #ea580c; --medium: #d97706;
+    --low: #16a34a;      --info: #6b7280;  --bg: #0f172a;
+    --surface: #1e293b;  --surface2: #334155; --text: #e2e8f0;
+    --text-muted: #94a3b8; --border: #475569; --accent: #3b82f6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; line-height: 1.6; }
+  a { color: var(--accent); }
+
+  /* Layout */
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+  /* Header */
+  .report-header { background: var(--surface); border-bottom: 3px solid var(--accent); padding: 28px 32px; margin-bottom: 28px; border-radius: 8px; }
+  .report-header h1 { font-size: 26px; font-weight: 700; color: #f1f5f9; }
+  .report-header .meta { margin-top: 8px; color: var(--text-muted); font-size: 13px; display: flex; gap: 24px; flex-wrap: wrap; }
+  .risk-badge { display: inline-block; padding: 4px 14px; border-radius: 4px; font-weight: 700; font-size: 13px; letter-spacing: 0.5px; }
+
+  /* Risk matrix */
+  .risk-matrix { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 28px; }
+  .risk-card { background: var(--surface); border-radius: 8px; padding: 20px; text-align: center; border-top: 4px solid; }
+  .risk-card.critical { border-color: var(--critical); }
+  .risk-card.high      { border-color: var(--high); }
+  .risk-card.medium    { border-color: var(--medium); }
+  .risk-card.low       { border-color: var(--low); }
+  .risk-card .count    { font-size: 36px; font-weight: 800; }
+  .risk-card .label    { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); margin-top: 4px; }
+  .risk-card.critical .count { color: var(--critical); }
+  .risk-card.high      .count { color: var(--high); }
+  .risk-card.medium    .count { color: var(--medium); }
+  .risk-card.low       .count { color: var(--low); }
+
+  /* Section */
+  .section { background: var(--surface); border-radius: 8px; padding: 24px; margin-bottom: 24px; }
+  .section h2 { font-size: 16px; font-weight: 700; color: #f1f5f9; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+
+  /* Executive summary */
+  .exec-summary { background: var(--surface2); border-left: 4px solid var(--accent); padding: 16px 20px; border-radius: 0 6px 6px 0; line-height: 1.8; color: #cbd5e1; }
+
+  /* Stack info */
+  .stack-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+  .stack-chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 20px; padding: 4px 14px; font-size: 12px; color: var(--text-muted); }
+  .stack-chip span { color: var(--text); font-weight: 600; }
+
+  /* Finding cards */
+  .finding-card { background: var(--surface2); border-radius: 6px; padding: 20px; margin-bottom: 16px; border-left: 4px solid; }
+  .finding-card.critical { border-color: var(--critical); }
+  .finding-card.high     { border-color: var(--high); }
+  .finding-card.medium   { border-color: var(--medium); }
+  .finding-card.low      { border-color: var(--low); }
+  .finding-card.info     { border-color: var(--info); }
+
+  .finding-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+  .sev-badge { padding: 2px 10px; border-radius: 3px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; white-space: nowrap; }
+  .sev-badge.critical { background: var(--critical); color: #fff; }
+  .sev-badge.high     { background: var(--high);     color: #fff; }
+  .sev-badge.medium   { background: var(--medium);   color: #fff; }
+  .sev-badge.low      { background: var(--low);      color: #fff; }
+  .sev-badge.info     { background: var(--info);     color: #fff; }
+
+  .owasp-badge { background: #1d4ed8; color: #bfdbfe; padding: 2px 10px; border-radius: 3px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .cwe-badge   { background: var(--surface); color: var(--text-muted); border: 1px solid var(--border); padding: 2px 10px; border-radius: 3px; font-size: 11px; white-space: nowrap; }
+  .cvss-badge  { background: #312e81; color: #c7d2fe; padding: 2px 10px; border-radius: 3px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+  .finding-title { font-size: 15px; font-weight: 700; color: #f1f5f9; }
+  .finding-desc  { color: #cbd5e1; margin: 8px 0 12px; }
+
+  .finding-section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 6px; margin-top: 12px; }
+  pre.evidence { background: #0f172a; border: 1px solid var(--border); border-radius: 4px; padding: 12px; font-size: 12px; color: #7dd3fc; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+  .remediation { background: #14532d22; border: 1px solid #16a34a55; border-radius: 4px; padding: 12px; color: #86efac; font-size: 13px; }
+  .references a { color: var(--accent); font-size: 12px; }
+
+  /* Recon summary */
+  .recon-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .recon-table td, .recon-table th { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .recon-table th { color: var(--text-muted); font-weight: 600; text-align: left; }
+  .recon-table td:first-child { color: var(--text-muted); width: 160px; }
+
+  /* Footer */
+  footer { text-align: center; color: var(--text-muted); font-size: 12px; padding: 24px 0; border-top: 1px solid var(--border); margin-top: 32px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header -->
+  <div class="report-header">
+    <h1>Penetration Test Report</h1>
+    <div class="meta">
+      <span>Target: <strong>{{ target }}</strong></span>
+      <span>Date: {{ scan_date }}</span>
+      <span>Overall Risk:
+        {% set risk_color = {'CRITICAL': '#dc2626', 'HIGH': '#ea580c', 'MEDIUM': '#d97706', 'LOW': '#16a34a', 'INFO': '#6b7280'} %}
+        <span class="risk-badge" style="background:{{ risk_color.get(overall_risk, '#6b7280') }}; color:#fff;">
+          {{ overall_risk }}
+        </span>
+      </span>
+    </div>
+  </div>
+
+  <!-- Risk Matrix -->
+  <div class="risk-matrix">
+    <div class="risk-card critical"><div class="count">{{ counts.critical }}</div><div class="label">Critical</div></div>
+    <div class="risk-card high">   <div class="count">{{ counts.high }}</div>   <div class="label">High</div></div>
+    <div class="risk-card medium"> <div class="count">{{ counts.medium }}</div> <div class="label">Medium</div></div>
+    <div class="risk-card low">    <div class="count">{{ counts.low }}</div>    <div class="label">Low</div></div>
+  </div>
+
+  <!-- Executive Summary -->
+  {% if executive_summary %}
+  <div class="section">
+    <h2>Executive Summary</h2>
+    <div class="exec-summary">{{ executive_summary }}</div>
+  </div>
+  {% endif %}
+
+  <!-- Tech Stack -->
+  {% if stack %}
+  <div class="section">
+    <h2>Target Profile</h2>
+    <div class="stack-grid">
+      {% for key in ['framework', 'cms', 'server', 'language', 'waf'] %}
+        {% if stack.get(key) %}
+        <div class="stack-chip">{{ key | capitalize }}: <span>{{ stack[key] }}</span></div>
+        {% endif %}
+      {% endfor %}
+      {% if not stack.get('framework') and not stack.get('cms') and not stack.get('server') %}
+      <div class="stack-chip"><span>Stack not detected</span></div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Recon Summary -->
+  {% if recon %}
+  <div class="section">
+    <h2>Reconnaissance Summary</h2>
+    <table class="recon-table">
+      <tr><th>Data</th><th>Count</th></tr>
+      {% if recon.get('subdomains') %}<tr><td>Subdomains Found</td><td>{{ recon.subdomains | length }}</td></tr>{% endif %}
+      {% if recon.get('live_hosts') %}<tr><td>Live Hosts</td><td>{{ recon.live_hosts | length }}</td></tr>{% endif %}
+      {% if recon.get('urls') %}<tr><td>URLs Discovered</td><td>{{ recon.urls | length }}</td></tr>{% endif %}
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Findings -->
+  <div class="section">
+    <h2>Findings ({{ findings | length }})</h2>
+
+    {% if findings %}
+      {% for f in findings %}
+      {% set sev = (f.get('severity') or 'info') | lower %}
+      <div class="finding-card {{ sev }}">
+        <div class="finding-header">
+          <span class="sev-badge {{ sev }}">{{ sev }}</span>
+          {% if f.get('owasp_category') or f.get('owasp') %}
+          <span class="owasp-badge">{{ f.get('owasp_category') or f.get('owasp') }}</span>
+          {% endif %}
+          {% if f.get('cwe_id') %}
+          <span class="cwe-badge">{{ f.cwe_id }}</span>
+          {% endif %}
+          {% if f.get('cvss_estimate') %}
+          <span class="cvss-badge">CVSS {{ f.cvss_estimate }}</span>
+          {% endif %}
+          <span class="finding-title">{{ f.get('title') or f.get('finding') or 'Unnamed Finding' }}</span>
+        </div>
+
+        {% if f.get('description') %}
+        <div class="finding-desc">{{ f.description }}</div>
+        {% endif %}
+
+        {% if f.get('evidence') %}
+        <div class="finding-section-label">Evidence</div>
+        <pre class="evidence">{{ f.evidence }}</pre>
+        {% endif %}
+
+        {% if f.get('remediation') %}
+        <div class="finding-section-label">Remediation</div>
+        <div class="remediation">{{ f.remediation }}</div>
+        {% endif %}
+
+        {% if f.get('references') %}
+        <div class="finding-section-label">References</div>
+        <div class="references"><a href="{{ f.references }}" target="_blank">{{ f.references }}</a></div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    {% else %}
+      <p style="color: var(--text-muted); text-align:center; padding: 32px;">No findings recorded for this scan.</p>
+    {% endif %}
+  </div>
+
+</div>
+<footer>
+  Generated by <strong>PhantomAI</strong> &mdash; {{ scan_date }} &mdash; For authorized security testing only
+</footer>
+</body>
+</html>
