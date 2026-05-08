@@ -42,10 +42,11 @@ def main():
     if args.no_ai:
         print("[*] AI disabled — running in standard mode")
     elif not ai_enabled:
-        print("[!] ANTHROPIC_API_KEY not set or invalid — running without AI")
-        print("    Set ANTHROPIC_API_KEY in .env to enable AI features")
+        print("[!] AI unavailable — set AI_TIER and credentials in .env")
+        print("    Free tier : install Ollama (https://ollama.com) → AI_TIER=free")
+        print("    Paid tier : set ANTHROPIC_API_KEY           → AI_TIER=basic or pro")
     else:
-        print("[+] AI engine ready (Haiku + Sonnet)")
+        print(f"[+] AI tier: {ai.tier_label()}")
 
     # Phase 0: Validation + Tech Fingerprinting
     print("\n[*] Phase 0: Target Validation & Fingerprinting")

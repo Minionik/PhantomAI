@@ -10,7 +10,7 @@
   AI-Powered Penetration Testing Framework  |  OWASP 2025  |  v1.0
 ```
 
-**PhantomAI** is an AI-powered, automated penetration testing framework that covers the full **OWASP Top 10 (2025)** attack surface. It uses **Claude Haiku** for cheap triage and classification tasks, and **Claude Sonnet** for deep reasoning — generating context-aware payloads, filtering false positives, and producing professional HTML reports — all for under **$0.01 per scan**.
+**PhantomAI** is an AI-powered, automated penetration testing framework that covers the full **OWASP Top 10 (2025)** attack surface. It supports three AI tiers — including a **completely free local mode** using Ollama — so you can run full AI-assisted scans with zero API cost.
 
 > **For authorized security testing only.** Always obtain written permission before testing any target.
 
@@ -20,7 +20,8 @@
 
 - [Features](#features)
 - [OWASP 2025 Coverage](#owasp-2025-coverage)
-- [AI Integration](#ai-integration)
+- [AI Tiers](#ai-tiers)
+- [AI Integration Details](#ai-integration-details)
 - [Project Structure](#project-structure)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
@@ -28,7 +29,6 @@
 - [Usage](#usage)
 - [Scan Phases](#scan-phases)
 - [Output & Reports](#output--reports)
-- [Cost Breakdown](#cost-breakdown)
 - [Legal Disclaimer](#legal-disclaimer)
 
 ---
@@ -38,12 +38,13 @@
 - **Full 6-phase pentest pipeline** — recon → enumeration → vuln analysis → exploitation → reporting
 - **OWASP 2025 Top 10** coverage across all phases with per-finding categorization
 - **AI-powered at every phase** — tech stack fingerprinting, URL prioritization, false positive triage, context-aware payload generation, executive reporting
+- **Three AI tiers** — free (Ollama/local), basic (Claude Haiku), pro (Claude Haiku + Sonnet)
+- **Zero-cost AI mode** — runs entirely on local Ollama models, no API key, no internet required
 - **GET + POST exploitation** — discovers and tests HTML form fields automatically, not just query parameters
 - **SSTI-safe detection** — uses unique computed markers (`{{523*523}}=273529`) instead of generic numbers that cause false positives
 - **Response diffing** — compares baseline vs. payload response (status code + body length + content) for reliable detection
 - **AI-generated HTML report** — dark-themed, professional output with OWASP badges, CWE IDs, CVSS scores, evidence blocks, and stack-specific remediation
-- **Graceful `--no-ai` mode** — full scan with fallback logic when no API key is set
-- **Cost-optimized** — Haiku for cheap tasks, Sonnet only where depth matters, prompt caching on all system prompts
+- **Graceful `--no-ai` mode** — full scan with rule-based fallback when AI is unavailable
 
 ---
 
@@ -64,35 +65,101 @@
 
 ---
 
-## AI Integration
+## AI Tiers
 
-PhantomAI uses the **Anthropic Claude API** with two models routed by task complexity:
+PhantomAI has three AI tiers. Set `AI_TIER` in your `.env` file — or let it auto-detect.
 
-| Model | Used For | Cost (approx.) |
-|---|---|---|
-| `claude-haiku-4-5` | Tech fingerprinting, URL scoring, wordlist hints, false positive triage | ~$0.00025 per call |
-| `claude-sonnet-4-6` | Context-aware payload generation, OWASP-mapped report with CVSS/CWE | ~$0.0045 per call |
+| Tier | `AI_TIER` value | Cost | Requirement | Quality |
+|------|----------------|------|-------------|---------|
+| **Free** | `free` | **$0.00** | Ollama installed locally | Good (depends on local model) |
+| **Basic** | `basic` | ~$0.001/scan | Anthropic API key | Better (Claude Haiku) |
+| **Pro** | `pro` | ~$0.008/scan | Anthropic API key | Best (Haiku + Sonnet) |
 
-### AI Touchpoints (per scan)
+**Auto-detection** (`AI_TIER=auto`, the default):
+- No `ANTHROPIC_API_KEY` set → **Free tier** (Ollama)
+- `ANTHROPIC_API_KEY` is set → **Pro tier** (Haiku + Sonnet)
 
-| Phase | AI Task | Model |
-|---|---|---|
-| Phase 0 | Identify framework, CMS, WAF, server from HTTP headers + HTML | Haiku |
-| Phase 1 | Score and prioritize top 50 attack-surface URLs from 500+ discovered | Haiku |
-| Phase 2 | Suggest stack-specific directory paths to add to ffuf wordlist | Haiku |
-| Phase 3 | Triage nuclei/dalfox/sqlmap/sslyze output — remove false positives | Haiku |
-| Phase 4 | Generate context-aware payloads per parameter name and detected stack | Sonnet |
-| Phase 5 | Write OWASP-mapped report with executive summary, CVSS, remediation | Sonnet |
+### Free Tier — Ollama (Zero Cost)
 
-### Cost Controls
+Runs a local AI model on your machine. No internet required after setup. No API key needed.
+
+**How it works:** PhantomAI calls your local Ollama server (`http://localhost:11434`) using the standard Ollama chat API. The same prompts run — tech fingerprinting, URL scoring, payload generation, report writing — just through a local model instead of Claude.
+
+**Recommended models:**
+
+| Model | VRAM | Speed | Best For |
+|---|---|---|---|
+| `llama3.2` | ~2 GB | Fast | Default — good all-rounder |
+| `llama3.1:8b` | ~5 GB | Medium | Better reasoning, better JSON |
+| `mistral` | ~4 GB | Fast | Strong JSON output compliance |
+| `qwen2.5:7b` | ~5 GB | Medium | Best for report generation |
+
+**Setup:**
+```bash
+# 1. Install Ollama
+# → https://ollama.com/download
+
+# 2. Pull a model
+ollama pull llama3.2
+
+# 3. Set in .env
+AI_TIER=free
+OLLAMA_MODEL=llama3.2
+```
+
+### Basic Tier — Claude Haiku Only
+
+Uses the Anthropic API but restricts **all** calls to Claude Haiku (the cheapest model). Even tasks that would normally use Sonnet (payload generation, report writing) are routed to Haiku. Lower quality than Pro but very cheap.
+
+**Setup:**
+```env
+AI_TIER=basic
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxx
+```
+
+### Pro Tier — Claude Haiku + Sonnet
+
+Full capability. Cheap tasks (triage, classification, URL scoring) use **Haiku**. Complex tasks (payload generation, full OWASP report with CVSS + remediation) use **Sonnet**. Estimated cost ~$0.008 per scan.
+
+**Setup:**
+```env
+AI_TIER=pro
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxx
+```
+
+---
+
+## AI Integration Details
+
+### AI Touchpoints Per Scan
+
+| Phase | AI Task | Free (Ollama) | Basic (Haiku) | Pro (Haiku+Sonnet) |
+|---|---|---|---|---|
+| Phase 0 | Identify framework, CMS, WAF from headers + HTML | Local model | Haiku | Haiku |
+| Phase 1 | Score + prioritize top 50 attack-surface URLs | Local model | Haiku | Haiku |
+| Phase 2 | Suggest stack-specific directory paths for ffuf | Local model | Haiku | Haiku |
+| Phase 3 | Triage scanner output — remove false positives | Local model | Haiku | Haiku |
+| Phase 4 | Generate context-aware payloads per param + stack | Local model | Haiku | **Sonnet** |
+| Phase 5 | Write OWASP-mapped report with CVSS + remediation | Local model | Haiku | **Sonnet** |
+
+### Cost Controls (Paid Tiers)
 
 - **Prompt caching** (`cache_control: ephemeral`) on all system prompts — up to 90% cost reduction on repeat calls
 - All tool output **truncated to 3000 chars** before any API call
-- AI calls are **skipped entirely** when a phase returns empty results
-- `--no-ai` flag disables all API calls — tool works fully offline with fallback logic
-- **Haiku handles 4 of 6 calls** (12× cheaper than Sonnet)
+- AI calls **skipped entirely** when a phase returns empty results
+- `--no-ai` flag disables all AI calls
 
-**Estimated total cost per full scan: ~$0.008**
+### Cost per Scan (Paid Tiers)
+
+| Phase | Basic (Haiku all) | Pro (Haiku + Sonnet) |
+|---|---|---|
+| Phase 0 — Stack fingerprint | ~$0.00016 | ~$0.00016 |
+| Phase 1 — URL prioritization | ~$0.00064 | ~$0.00064 |
+| Phase 2 — Wordlist hints | ~$0.00012 | ~$0.00012 |
+| Phase 3 — False positive triage | ~$0.00120 | ~$0.00120 |
+| Phase 4 — Payload generation | ~$0.00025 | ~$0.00150 |
+| Phase 5 — Report generation | ~$0.00075 | ~$0.00450 |
+| **Total** | **~$0.003** | **~$0.008** |
 
 ---
 
@@ -107,7 +174,7 @@ PhantomAI/
 ├── .env.example                        # Environment variable template
 │
 ├── core/
-│   ├── ai_engine.py                    # Claude client (Haiku + Sonnet, caching, fallback)
+│   ├── ai_engine.py                    # Tiered AI client (Ollama / Haiku / Sonnet)
 │   ├── owasp_mapper.py                 # OWASP 2025 Top 10 category + CWE mapping
 │   ├── run_cmd.py                      # Shared safe subprocess utility (no shell=True)
 │   ├── tech_fingerprint.py             # HTTP header + HTML stack detection
@@ -143,7 +210,7 @@ PhantomAI/
 ## Prerequisites
 
 ### Python
-- Python **3.10 or higher** (uses `match`, `type unions`, `list[str]` hints)
+- Python **3.10 or higher** (uses `type unions`, `list[str]` hints)
 
 ### External Tools
 PhantomAI orchestrates these tools — they must be installed and available in your `PATH`:
@@ -154,7 +221,7 @@ PhantomAI orchestrates these tools — they must be installed and available in y
 | `assetfinder` | Asset discovery | [tomnomnom/assetfinder](https://github.com/tomnomnom/assetfinder) |
 | `amass` | Subdomain enumeration | [owasp-amass/amass](https://github.com/owasp-amass/amass) |
 | `httpx` | Live host detection | [projectdiscovery/httpx](https://github.com/projectdiscovery/httpx) |
-| `gau` | URL gathering (GAU) | [lc/gau](https://github.com/lc/gau) |
+| `gau` | URL gathering | [lc/gau](https://github.com/lc/gau) |
 | `waybackurls` | Wayback Machine URLs | [tomnomnom/waybackurls](https://github.com/tomnomnom/waybackurls) |
 | `ffuf` | Directory + auth fuzzing | [ffuf/ffuf](https://github.com/ffuf/ffuf) |
 | `nuclei` | Template-based vuln scanner | [projectdiscovery/nuclei](https://github.com/projectdiscovery/nuclei) |
@@ -164,7 +231,7 @@ PhantomAI orchestrates these tools — they must be installed and available in y
 | `curl` | HTTP requests (SSRF probes) | Pre-installed on most systems |
 | `nmap` | Port scanning | [nmap.org](https://nmap.org/download.html) |
 
-> **Tip:** Most Go-based tools (subfinder, httpx, ffuf, nuclei, dalfox, gau, waybackurls, assetfinder) can be bulk-installed using [pdtm](https://github.com/projectdiscovery/pdtm) — Project Discovery's tool manager.
+> **Tip:** Most Go-based tools can be bulk-installed with [pdtm](https://github.com/projectdiscovery/pdtm) — Project Discovery's tool manager.
 
 ---
 
@@ -195,64 +262,62 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-This installs:
-- `anthropic` — Claude API SDK
-- `jinja2` — HTML report rendering
-- `requests` — HTTP requests for fingerprinting + exploitation
-- `python-dotenv` — `.env` file loading
+Installs: `anthropic`, `jinja2`, `requests`, `python-dotenv`
 
 ### Step 4 — Install external tools
 
-**On Linux/macOS (recommended method using pdtm):**
+**Linux/macOS (using pdtm):**
 ```bash
-# Install pdtm (Project Discovery tool manager)
 go install -v github.com/projectdiscovery/pdtm/cmd/pdtm@latest
-
-# Install all Project Discovery tools at once
 pdtm -install subfinder httpx nuclei dalfox ffuf gau
-
-# Install remaining tools manually
 go install github.com/tomnomnom/assetfinder@latest
 go install github.com/tomnomnom/waybackurls@latest
 go install -v github.com/owasp-amass/amass/v4/...@master
-
-# sslyze via pip
 pip install sslyze
-
-# sqlmap
-sudo apt install sqlmap        # Debian/Ubuntu
-brew install sqlmap            # macOS
+sudo apt install sqlmap nmap   # Debian/Ubuntu
 ```
 
-**On Windows:**
+**Windows (Scoop + pip):**
 ```powershell
-# Download pre-built binaries from each tool's GitHub releases page
-# and place them in a directory that is in your PATH (e.g. C:\Tools\bin)
-
-# Or install via Scoop (https://scoop.sh)
 scoop install nmap curl
-
-# sslyze and sqlmap via pip
 pip install sslyze sqlmap
+# Download remaining Go binaries from their GitHub releases pages
 ```
 
-### Step 5 — Configure environment
+### Step 5 — Configure your AI tier
 
 ```bash
-# Copy the example file
 cp .env.example .env   # Linux/macOS
 copy .env.example .env  # Windows
-
-# Open .env and add your Anthropic API key
 ```
 
-Edit `.env`:
+Then edit `.env` for your chosen tier:
+
+**Free tier (Ollama — zero cost):**
 ```env
-PYTHONDONTWRITEBYTECODE=1
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx
+AI_TIER=free
+OLLAMA_MODEL=llama3.2
+```
+Also install Ollama and pull the model:
+```bash
+# Install from https://ollama.com
+ollama pull llama3.2
+ollama serve   # keep this running in a separate terminal
 ```
 
-Get your API key at [console.anthropic.com](https://console.anthropic.com/).
+**Basic tier (Claude Haiku — cheapest paid):**
+```env
+AI_TIER=basic
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxx
+```
+
+**Pro tier (Claude Haiku + Sonnet — best quality):**
+```env
+AI_TIER=pro
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxx
+```
+
+Get your Anthropic key at [console.anthropic.com](https://console.anthropic.com/).
 
 ### Step 6 — Update Nuclei templates
 
@@ -264,36 +329,33 @@ nuclei -update-templates
 
 ## Configuration
 
-All configuration is done through the `.env` file and CLI arguments.
-
 ### `.env` Variables
 
-| Variable | Required | Description |
+| Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | For AI mode | Your Anthropic API key |
-| `PYTHONDONTWRITEBYTECODE` | No | Prevents `.pyc` file generation |
+| `AI_TIER` | `auto` | AI tier: `free`, `basic`, `pro`, or `auto` |
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (free tier) |
+| `OLLAMA_MODEL` | `llama3.2` | Ollama model to use (free tier) |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (basic/pro tiers) |
+| `PYTHONDONTWRITEBYTECODE` | `1` | Prevents `.pyc` file generation |
 
 ### CLI Arguments
 
 | Flag | Default | Description |
 |---|---|---|
-| `--target <domain>` | Interactive prompt | Target domain or IP — skips the interactive prompt |
-| `--output <dir>` | `.` (current dir) | Directory where the HTML report is saved |
-| `--no-ai` | Off | Disables all AI features — runs fully offline with fallback logic |
+| `--target <domain>` | Interactive prompt | Target domain or IP |
+| `--output <dir>` | `.` (current dir) | Directory to save HTML report |
+| `--no-ai` | Off | Disable all AI — rule-based fallback only |
 
 ---
 
 ## Usage
 
-### Basic scan (interactive)
+### Basic scan (interactive prompt)
 
 ```bash
 python phantomai.py
 ```
-
-You will be prompted to:
-1. Select mode: `a` (Web) or `b` (Network)
-2. Enter the target domain or IP
 
 ### Scan with target specified
 
@@ -307,22 +369,34 @@ python phantomai.py --target example.com
 python phantomai.py --target example.com --output ./reports
 ```
 
-### Run without AI (no API key required)
+### Run without any AI
 
 ```bash
 python phantomai.py --target example.com --no-ai
 ```
 
-### Full example with all flags
+### Override AI tier at runtime via .env
 
 ```bash
-python phantomai.py --target testphp.vulnweb.com --output ./reports
+# Temporarily use free tier for this scan
+AI_TIER=free python phantomai.py --target example.com
 ```
 
-### Using the backward-compatible entry point
+### Startup output examples by tier
 
-```bash
-python main.py --target example.com
+**Free tier:**
+```
+[+] AI tier: FREE  (Ollama / llama3.2)
+```
+
+**Basic tier:**
+```
+[+] AI tier: BASIC (Claude Haiku only)
+```
+
+**Pro tier:**
+```
+[+] AI tier: PRO   (Claude Haiku + Sonnet)
 ```
 
 ---
@@ -334,87 +408,53 @@ PhantomAI runs a sequential 6-phase pipeline. Each phase feeds data into the nex
 ### Phase 0 — Target Validation & Fingerprinting
 - Validates that the target is reachable (HTTP/HTTPS or ICMP/nmap)
 - Probes HTTP headers and HTML to detect: framework, CMS, WAF, server, language
-- AI (Haiku) enriches the fingerprint when a key is available
+- AI enriches the fingerprint with the detected stack
 - **Output:** `stack` dict passed to all downstream phases
 
 ### Phase 1 — Reconnaissance
 - Enumerates subdomains via `subfinder`, `assetfinder`, and `amass`
 - Detects live hosts using `httpx`
-- Gathers historical URLs from `gau` (Google, Archive.org, URLScan) and `waybackurls`
-- AI (Haiku) scores and prioritizes the top 50 attack-surface URLs from potentially 1000+
+- Gathers historical URLs from `gau` and `waybackurls`
+- AI scores and prioritizes the top 50 attack-surface URLs from potentially 1000+
 - **Output:** `subdomains`, `live_hosts`, `urls`
 
 ### Phase 2 — Enumeration
 - Fuzzes directories with `ffuf` using the bundled `wordlists/dirs.txt`
-- AI (Haiku) appends stack-specific paths to the wordlist (e.g., `/artisan`, `/.env` for Laravel)
-- Extracts all parameterized URLs using `urllib.parse` — proper query string parsing, not naive `?` splitting
+- AI appends stack-specific paths to the wordlist (e.g., `/artisan`, `/.env` for Laravel)
+- Extracts all parameterized URLs using proper `urllib.parse` query string parsing
 - **Output:** `fuzz` hits, `params` (parameterized URLs), `param_names`
 
 ### Phase 3 — Vulnerability Analysis
 - **A01/A03/A05/A06:** `nuclei` with medium/high/critical severity filter
 - **A03 XSS:** `dalfox` on top 5 prioritized URLs
-- **A03 SQLi:** `sqlmap` with level 2 / risk 2 on top 5 URLs
+- **A03 SQLi:** `sqlmap` on top 5 URLs
 - **A02:** `sslyze` TLS/SSL configuration audit
-- **A10 SSRF:** Custom probes against AWS/GCP metadata endpoints and localhost
-- **A07:** `ffuf` against 35 common auth/session endpoints using temp wordlist
-- AI (Haiku) triages all tool output — removes false positives, maps each finding to OWASP 2025, assigns severity and confidence
+- **A10 SSRF:** Custom probes against cloud metadata endpoints and localhost
+- **A07:** `ffuf` against 35 common auth/session endpoints
+- AI triages all tool output — removes false positives, maps to OWASP 2025, assigns severity
 - **Output:** `triaged` list of structured findings
 
 ### Phase 4 — Exploitation
-- AI (Sonnet) generates context-aware payloads per parameter name + detected stack
-  - `id=` → SQLi payloads  |  `search=` → XSS  |  `url=` → SSRF  |  `file=` → LFI
-  - Fallback payloads used when AI is unavailable
-- **GET exploitation:** injects into query string parameters, compares against baseline response
-- **POST exploitation:** discovers HTML form fields, resolves action URLs, tests via `requests.post`
-- Detection uses **response diffing** (status code change + body length + known error patterns) — not simple string matching
-- SSTI uses `{{523*523}}` → checks for `273529` (statistically safe, won't appear in normal pages)
+- AI generates context-aware payloads per parameter name + detected stack
+- **GET exploitation:** injects into query string parameters with baseline comparison
+- **POST exploitation:** discovers HTML form fields, tests via `requests.post`
+- Detection uses response diffing — not simple string matching
+- SSTI uses `{{523*523}}` → checks for `273529`
 - **Output:** confirmed hits with method, parameter, payload, and indicator list
 
 ### Phase 5 — Report Generation
-- AI (Sonnet) synthesizes all findings into a structured JSON report:
-  - Title, OWASP category, CWE ID, CVSS estimate, description, evidence, stack-specific remediation, OWASP reference URL
-  - 3-sentence executive summary for non-technical stakeholders
+- AI synthesizes all findings into a structured report with OWASP category, CWE ID, CVSS estimate, evidence, stack-specific remediation
 - Falls back to rule-based report if AI unavailable
 - HTML report rendered via Jinja2 and saved to disk
-- Terminal summary printed with severity counts and top 3 critical findings
+- Terminal summary with severity counts and top 3 critical findings
 
 ---
 
 ## Output & Reports
 
-### Terminal Output
+### Terminal Summary
 
 ```
-  ██████╗ ██╗  ██╗ ...
-  AI-Powered Penetration Testing Framework  |  OWASP 2025  |  v1.0
-
-[+] AI engine ready (Haiku + Sonnet)
-
-[*] Phase 0: Target Validation & Fingerprinting
-[+] Stack detected: framework=Laravel, server=nginx/1.24, waf=Cloudflare
-
-[*] Phase 1: Reconnaissance
-    Subdomains : 14 | Live hosts : 9 | URLs : 347
-
-[*] Phase 2: Enumeration
-    Fuzz hits : 23 | Params found : 41
-
-[*] Phase 3: Vulnerability Analysis
-    [*] Running nuclei...
-    [*] Running dalfox on 5 URLs...
-    [*] Running sqlmap on 5 URLs...
-    [*] Running sslyze (TLS/SSL check)...
-    [*] Probing for SSRF...
-    [*] Fuzzing auth endpoints...
-    Triaged findings : 7
-
-[*] Phase 4: Exploitation
-    [*] Discovering POST forms...
-    [*] Testing 3 POST form(s)...
-    Exploitation results : 2
-
-[*] Phase 5: Report Generation
-
 ============================================================
   SCAN SUMMARY
 ============================================================
@@ -435,39 +475,13 @@ PhantomAI runs a sequential 6-phase pipeline. Each phase feeds data into the nex
 [+] HTML report saved: D:\reports\report_20250508_143022.html
 ```
 
-### HTML Report
+### HTML Report Contents
 
-The HTML report (`report_YYYYMMDD_HHMMSS.html`) includes:
-
-- **Risk matrix** — Critical / High / Medium / Low counts with colour-coded cards
-- **Executive summary** — 3 sentences written by AI for non-technical readers
-- **Target profile** — detected tech stack (framework, CMS, WAF, server, language)
-- **Recon summary** — subdomain count, live hosts, URL count
-- **Finding cards** (one per vulnerability):
-  - Severity badge (colour-coded)
-  - OWASP 2025 category badge
-  - CWE ID
-  - CVSS score estimate
-  - Technical description
-  - Evidence snippet (from scanner output)
-  - Remediation guidance (stack-specific when AI is used)
-  - OWASP reference link
-
----
-
-## Cost Breakdown
-
-| Phase | Model | Est. Tokens | Est. Cost |
-|---|---|---|---|
-| Phase 0 — Stack fingerprint | Haiku | ~200 | $0.00016 |
-| Phase 1 — URL prioritization | Haiku | ~800 | $0.00064 |
-| Phase 2 — Wordlist hints | Haiku | ~150 | $0.00012 |
-| Phase 3 — False positive triage | Haiku | ~1500 | $0.00120 |
-| Phase 4 — Payload generation | Sonnet | ~500 | $0.00150 |
-| Phase 5 — Report generation | Sonnet | ~1500 | $0.00450 |
-| **Total per scan** | | **~4650** | **~$0.008** |
-
-Prompt caching reduces repeat-call costs by up to 90%.
+- Risk matrix — Critical / High / Medium / Low counts (colour-coded)
+- Executive summary — written by AI for non-technical readers
+- Target profile — detected tech stack
+- Recon summary — subdomain count, live hosts, URL count
+- Per-finding cards: severity badge, OWASP badge, CWE ID, CVSS, description, evidence, remediation, reference link
 
 ---
 
@@ -476,7 +490,7 @@ Prompt caching reduces repeat-call costs by up to 90%.
 > **PhantomAI is designed exclusively for authorized security testing.**
 >
 > - Only use this tool against systems you own or have **explicit written permission** to test.
-> - Unauthorized use against systems you do not own is **illegal** in most jurisdictions and may result in criminal prosecution.
+> - Unauthorized use against systems you do not own is **illegal** in most jurisdictions.
 > - The authors accept no liability for misuse or damage caused by this tool.
 > - Always follow responsible disclosure practices when reporting vulnerabilities.
 
