@@ -72,16 +72,67 @@ def main():
 
     # Phase 1: Recon
     print("\n[*] Phase 1: Reconnaissance")
-    recon = run_recon(target, ai=ai)
+    recon       = run_recon(target, ai=ai)
+    js_findings = recon.get("js_findings", [])
+    port_scan   = recon.get("port_scan", {})
+    asn_info    = recon.get("asn_info", {})
+    cloud       = recon.get("cloud_assets", {})
+    dns_data    = recon.get("dns_records", {})
+    leak_data   = recon.get("leak_recon", {})
+    shodan_data = recon.get("shodan", {})
     print(f"    Subdomains : {len(recon.get('subdomains', []))} | "
           f"Live hosts : {len(recon.get('live_hosts', []))} | "
           f"URLs : {len(recon.get('urls', []))}")
+    if asn_info.get("asn"):
+        print(f"    ASN        : AS{asn_info['asn']} — {asn_info.get('org','?')} "
+              f"({len(asn_info.get('prefixes',[]))} prefix(es))")
+    total_cloud = sum(len(v) for k, v in cloud.items() if k != "raw")
+    if total_cloud:
+        print(f"    Cloud      : {total_cloud} asset(s) — "
+              f"S3:{len(cloud.get('s3',[]))} Azure:{len(cloud.get('azure',[]))} "
+              f"GCP:{len(cloud.get('gcp',[]))}")
+    if port_scan:
+        print(f"    Ports      : " + " | ".join(
+            f"{h}→[{', '.join(p[:3])}{'…' if len(p)>3 else ''}]"
+            for h, p in list(port_scan.items())[:3]
+        ))
+    if js_findings:
+        high = sum(1 for f in js_findings if f.get("risk_level") == "high")
+        print(f"    JS files   : {len(js_findings)} analysed ({high} high-risk)")
+    if dns_data.get("security_issues"):
+        issues = dns_data["security_issues"]
+        critical = sum(1 for i in issues if i.get("risk") == "critical")
+        high_dns = sum(1 for i in issues if i.get("risk") == "high")
+        print(f"    DNS issues : {len(issues)} "
+              f"({critical} critical, {high_dns} high) — "
+              f"SPF:{'✓' if dns_data.get('spf') else '✗'}  "
+              f"DMARC:{'✓' if dns_data.get('dmarc') else '✗'}  "
+              f"DKIM:{'✓' if dns_data.get('dkim') else '✗'}")
+    if leak_data.get("summary"):
+        for line in leak_data["summary"]:
+            print(f"    Leaks      : {line}")
+    if shodan_data.get("ports"):
+        vuln_count = len(shodan_data.get("vulns", []))
+        print(f"    Shodan     : {len(shodan_data['ports'])} port(s)"
+              + (f", {vuln_count} CVE(s): {', '.join(shodan_data['vulns'][:3])}" if vuln_count else ""))
 
     # Phase 2: Enumeration
     print("\n[*] Phase 2: Enumeration")
     enum = run_enum(target, recon.get("urls", []), stack=stack, ai=ai)
     print(f"    Fuzz hits : {len(enum.get('fuzz', []))} | "
           f"Params found : {len(enum.get('params', []))}")
+    if enum.get("swagger"):
+        paths_total = sum(len(s.get("paths", [])) for s in enum["swagger"])
+        print(f"    Swagger/OpenAPI : {len(enum['swagger'])} spec(s) found "
+              f"({paths_total} API path(s) discovered)")
+    if enum.get("graphql"):
+        introspection_on = sum(1 for g in enum["graphql"] if g.get("introspection_enabled"))
+        print(f"    GraphQL : {len(enum['graphql'])} endpoint(s) found "
+              f"({introspection_on} with introspection enabled)")
+    if enum.get("internal_services"):
+        svc_names = [s["service"] for s in enum["internal_services"][:4]]
+        print(f"    Internal services : {len(enum['internal_services'])} exposed — "
+              + ", ".join(svc_names))
 
     # Phase 3: Vulnerability Analysis
     print("\n[*] Phase 3: Vulnerability Analysis")
@@ -101,6 +152,7 @@ def main():
         stack=stack,
         triaged_findings=triaged,
         exploit_results=exploit.get("results", {}),
+        js_findings=js_findings,
         ai=ai,
     )
 
@@ -124,9 +176,20 @@ def main():
         "executive_summary": post.get("executive_summary", ""),
         "findings":          all_findings,
         "recon": {
-            "subdomains": recon.get("subdomains", []),
-            "live_hosts":  recon.get("live_hosts", []),
-            "urls":        recon.get("urls", []),
+            "subdomains":       recon.get("subdomains", []),
+            "live_hosts":       recon.get("live_hosts", []),
+            "urls":             recon.get("urls", []),
+            "dns_records":      recon.get("dns_records", {}),
+            "dns_issues":       (recon.get("dns_records") or {}).get("security_issues", []),
+            "leak_recon":       recon.get("leak_recon", {}),
+            "shodan":           recon.get("shodan", {}),
+            "cloud_assets":     recon.get("cloud_assets", {}),
+            "asn_info":         recon.get("asn_info", {}),
+        },
+        "enumeration": {
+            "swagger":           enum.get("swagger", []),
+            "graphql":           enum.get("graphql", []),
+            "internal_services": enum.get("internal_services", []),
         },
     }
 
