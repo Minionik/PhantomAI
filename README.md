@@ -10,7 +10,7 @@
   AI-Powered Penetration Testing Framework  |  OWASP 2025  |  v1.0
 ```
 
-**PhantomAI** is an AI-powered, automated penetration testing framework that covers the full **OWASP Top 10 (2025)** attack surface. It supports three AI tiers — including a **completely free local mode** using Ollama — so you can run full AI-assisted scans with zero API cost.
+**PhantomAI** is an AI-powered, automated penetration testing framework that covers the full **OWASP Top 10 (2025)** attack surface. It supports four AI tiers — including a **zero-cost Pro mode** using your Claude subscription and a **completely free local mode** using Ollama — so you can run full AI-assisted scans with zero extra cost.
 
 > **For authorized security testing only.** Always obtain written permission before testing any target.
 
@@ -38,7 +38,7 @@
 - **Full 6-phase pentest pipeline** — recon → enumeration → vuln analysis → exploitation → reporting
 - **OWASP 2025 Top 10** coverage across all phases with per-finding categorization
 - **AI-powered at every phase** — tech stack fingerprinting, URL prioritization, false positive triage, context-aware payload generation, executive reporting
-- **Three AI tiers** — free (Ollama/local), basic (Claude Haiku), pro (Claude Haiku + Sonnet)
+- **Four AI tiers** — subscription (Claude Code/Pro), free (Ollama/local), basic (Claude Haiku), pro (Claude Haiku + Sonnet)
 - **Zero-cost AI mode** — runs entirely on local Ollama models, no API key, no internet required
 - **GET + POST exploitation** — discovers and tests HTML form fields automatically, not just query parameters
 - **SSTI-safe detection** — uses unique computed markers (`{{523*523}}=273529`) instead of generic numbers that cause false positives
@@ -67,17 +67,37 @@
 
 ## AI Tiers
 
-PhantomAI has three AI tiers. Set `AI_TIER` in your `.env` file — or let it auto-detect.
+PhantomAI has four AI tiers. Set `AI_TIER` in your `.env` file — or let it auto-detect.
 
 | Tier | `AI_TIER` value | Cost | Requirement | Quality |
 |------|----------------|------|-------------|---------|
+| **Subscription** | `claude_code` | **$0.00 extra** | Claude Pro/Max + Claude Code CLI | **Best** (full Claude Sonnet) |
 | **Free** | `free` | **$0.00** | Ollama installed locally | Good (depends on local model) |
 | **Basic** | `basic` | ~$0.001/scan | Anthropic API key | Better (Claude Haiku) |
 | **Pro** | `pro` | ~$0.008/scan | Anthropic API key | Best (Haiku + Sonnet) |
 
 **Auto-detection** (`AI_TIER=auto`, the default):
-- No `ANTHROPIC_API_KEY` set → **Free tier** (Ollama)
-- `ANTHROPIC_API_KEY` is set → **Pro tier** (Haiku + Sonnet)
+1. `claude` CLI found → **Subscription tier** (your Pro/Max plan)
+2. `ANTHROPIC_API_KEY` is set → **Pro tier** (Haiku + Sonnet, API billing)
+3. Neither → **Free tier** (Ollama local model)
+
+### Subscription Tier — Claude Code CLI (Recommended)
+
+If you have a **Claude Pro or Max subscription**, this is the best option: zero extra cost, full Claude quality.
+
+**How it works:** PhantomAI calls the `claude` CLI using `claude -p "..."` as a subprocess. All AI calls consume your subscription's usage allowance — no separate API billing.
+
+**Setup:**
+```bash
+# 1. Install Claude Code CLI
+# → https://claude.ai/code  (or via npm: npm install -g @anthropic-ai/claude-code)
+
+# 2. Authenticate
+claude login
+
+# 3. Set in .env (or leave AI_TIER=auto — it auto-detects the CLI)
+AI_TIER=claude_code
+```
 
 ### Free Tier — Ollama (Zero Cost)
 
@@ -333,7 +353,7 @@ nuclei -update-templates
 
 | Variable | Default | Description |
 |---|---|---|
-| `AI_TIER` | `auto` | AI tier: `free`, `basic`, `pro`, or `auto` |
+| `AI_TIER` | `auto` | AI tier: `claude_code`, `free`, `basic`, `pro`, or `auto` |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL (free tier) |
 | `OLLAMA_MODEL` | `llama3.2` | Ollama model to use (free tier) |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key (basic/pro tiers) |
@@ -383,6 +403,11 @@ AI_TIER=free python phantomai.py --target example.com
 ```
 
 ### Startup output examples by tier
+
+**Subscription tier (Claude Code / Pro):**
+```
+[+] AI tier: SUBSCRIPTION (Claude Code / Pro — zero extra cost)
+```
 
 **Free tier:**
 ```

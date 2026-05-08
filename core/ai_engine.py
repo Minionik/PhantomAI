@@ -1,5 +1,6 @@
 import os
 import json
+import subprocess
 import requests as _http
 from dotenv import load_dotenv
 
@@ -10,9 +11,10 @@ _MODEL_HAIKU  = "claude-haiku-4-5-20251001"   # fast + cheap
 _MODEL_SONNET = "claude-sonnet-4-6"            # deep reasoning
 
 # Tier constants — set AI_TIER in .env to control behaviour
-TIER_FREE  = "free"    # Ollama (local models, zero API cost)
-TIER_BASIC = "basic"   # Claude Haiku only (paid, but cheapest option)
-TIER_PRO   = "pro"     # Claude Haiku + Sonnet (full capability)
+TIER_FREE  = "free"         # Ollama (local models, zero API cost)
+TIER_BASIC = "basic"        # Claude Haiku only (paid, but cheapest option)
+TIER_PRO   = "pro"          # Claude Haiku + Sonnet (full capability)
+TIER_CODE  = "claude_code"  # Claude Code CLI — bills against Pro/Max subscription
 
 _SYSTEM_PENTEST = (
     "You are an expert penetration tester with deep knowledge of the OWASP Top 10 (2025), "
@@ -25,20 +27,23 @@ class AIEngine:
     """
     Tiered AI backend — auto-selects based on .env:
 
-        AI_TIER=free   → Ollama local model (zero cost, requires Ollama running)
-        AI_TIER=basic  → Claude Haiku only  (cheapest paid option)
-        AI_TIER=pro    → Claude Haiku + Sonnet (highest quality, default when API key set)
-        AI_TIER=auto   → no key = free (Ollama), key present = pro  [default]
+        AI_TIER=claude_code → Claude Code CLI (uses Pro/Max subscription — zero extra cost)
+        AI_TIER=free        → Ollama local model (zero cost, requires Ollama running)
+        AI_TIER=basic       → Claude Haiku only  (cheapest paid option)
+        AI_TIER=pro         → Claude Haiku + Sonnet (highest quality, default when API key set)
+        AI_TIER=auto        → claude CLI found = claude_code; API key = pro; else = free [default]
     """
 
     def __init__(self):
         self._claude       = None
         self._available    = False
-        self._tier         = self._resolve_tier()
         self._ollama_host  = os.getenv("OLLAMA_HOST",  "http://localhost:11434").rstrip("/")
         self._ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+        self._tier         = self._resolve_tier()
 
-        if self._tier == TIER_FREE:
+        if self._tier == TIER_CODE:
+            self._available = True  # CLI already confirmed in _resolve_tier
+        elif self._tier == TIER_FREE:
             self._available = self._check_ollama()
         else:
             api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
@@ -61,10 +66,12 @@ class AIEngine:
         return self._tier
 
     def tier_label(self) -> str:
+        if self._tier == TIER_CODE:
+            return "SUBSCRIPTION (Claude Code / Pro — zero extra cost)"
         if self._tier == TIER_FREE:
             return f"FREE  (Ollama / {self._ollama_model})"
         if self._tier == TIER_BASIC:
-            return f"BASIC (Claude Haiku only)"
+            return "BASIC (Claude Haiku only)"
         return "PRO   (Claude Haiku + Sonnet)"
 
     def ask(self, prompt: str, model: str = "fast") -> str:
@@ -76,6 +83,8 @@ class AIEngine:
         if not self._available:
             return ""
         prompt = self._truncate(prompt, 3000)
+        if self._tier == TIER_CODE:
+            return self._ask_claude_code(prompt)
         if self._tier == TIER_FREE:
             return self._ask_ollama(prompt)
         return self._ask_claude(prompt, model)
@@ -101,13 +110,17 @@ class AIEngine:
 
     def _resolve_tier(self) -> str:
         raw = os.getenv("AI_TIER", "auto").lower().strip()
+        if raw == TIER_CODE:
+            return TIER_CODE if self._check_claude_code() else TIER_FREE
         if raw == TIER_FREE:
             return TIER_FREE
         if raw == TIER_BASIC:
             return TIER_BASIC
         if raw == TIER_PRO:
             return TIER_PRO
-        # auto: presence of a real API key → pro, otherwise → free
+        # auto priority: claude CLI → pro (API key) → free (Ollama)
+        if self._check_claude_code():
+            return TIER_CODE
         key = os.getenv("ANTHROPIC_API_KEY", "").strip()
         if key and key != "your_api_key_here":
             return TIER_PRO
@@ -130,6 +143,35 @@ class AIEngine:
             print("[!] Ollama not reachable at", self._ollama_host)
             print("    Install from https://ollama.com and run: ollama serve")
             return False
+
+    def _check_claude_code(self) -> bool:
+        """Return True if the `claude` CLI is installed and accessible."""
+        try:
+            result = subprocess.run(
+                ["claude", "--version"],
+                capture_output=True, text=True, timeout=5
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    def _ask_claude_code(self, prompt: str) -> str:
+        """Send prompt via `claude -p` — bills against the user's Pro/Max subscription."""
+        full_prompt = f"{_SYSTEM_PENTEST}\n\n{prompt}"
+        try:
+            result = subprocess.run(
+                ["claude", "-p", full_prompt],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+            print(f"[!] Claude Code CLI error: {result.stderr.strip()[:200]}")
+        except FileNotFoundError:
+            print("[!] `claude` CLI not found — install Claude Code: https://claude.ai/code")
+            self._available = False
+        except subprocess.TimeoutExpired:
+            print("[!] Claude Code CLI timed out")
+        return ""
 
     def _ask_ollama(self, prompt: str) -> str:
         try:
@@ -196,9 +238,11 @@ class AIEngine:
             print("    Your claude.ai Pro subscription does NOT include API credits.")
             print("    API credits are billed separately at console.anthropic.com\n")
             print("    Zero-cost options:")
-            print("      1. Install Ollama → set AI_TIER=free in .env")
+            print("      1. Claude Code CLI (uses your Pro/Max subscription — recommended)")
+            print("         Install: https://claude.ai/code  →  set AI_TIER=claude_code in .env")
+            print("      2. Install Ollama → set AI_TIER=free in .env")
             print("         https://ollama.com  →  ollama pull llama3.2")
-            print("      2. Run with --no-ai flag for rule-based scanning\n")
+            print("      3. Run with --no-ai flag for rule-based scanning\n")
 
             # Auto-fallback to Ollama if it's already running
             if self._check_ollama():
