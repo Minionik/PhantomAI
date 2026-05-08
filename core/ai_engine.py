@@ -171,8 +171,45 @@ class AIEngine:
             )
             return response.content[0].text.strip()
         except Exception as e:
-            print(f"[!] Claude API error: {e}")
-            return ""
+            return self._handle_claude_error(e, prompt)
+
+    def _handle_claude_error(self, exc: Exception, prompt: str) -> str:
+        """
+        Called when a Claude API call fails.
+        - Credit / billing errors  → disable Claude for the session, try Ollama fallback.
+        - All other errors         → print once and return empty string.
+        """
+        msg = str(exc).lower()
+        is_credit_error = (
+            "credit balance" in msg
+            or "insufficient_funds" in msg
+            or "billing" in msg
+            or ("400" in msg and "credit" in msg)
+        )
+
+        if is_credit_error:
+            # Disable Claude for the rest of this scan — avoids printing this on every call.
+            self._claude     = None
+            self._available  = False
+
+            print("\n[!] Claude API: insufficient credits.")
+            print("    Your claude.ai Pro subscription does NOT include API credits.")
+            print("    API credits are billed separately at console.anthropic.com\n")
+            print("    Zero-cost options:")
+            print("      1. Install Ollama → set AI_TIER=free in .env")
+            print("         https://ollama.com  →  ollama pull llama3.2")
+            print("      2. Run with --no-ai flag for rule-based scanning\n")
+
+            # Auto-fallback to Ollama if it's already running
+            if self._check_ollama():
+                self._tier      = TIER_FREE
+                self._available = True
+                print("[+] Ollama detected — switching to free tier automatically\n")
+                return self._ask_ollama(prompt)
+        else:
+            print(f"[!] Claude API error: {exc}")
+
+        return ""
 
     @staticmethod
     def _truncate(text: str, max_chars: int) -> str:
