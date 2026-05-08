@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 # Suppress InsecureRequestWarning globally — PhantomAI intentionally sends
 # requests to targets with self-signed / invalid certificates (pentest context).
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-warnings.filterwarnings("ignore", message="Unverified HTTPS request")
+warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
 
 from core.ai_engine import AIEngine
 from pipelines.phase0_init import run_phase0
