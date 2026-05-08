@@ -1,13 +1,17 @@
 """
-Phase 12 — Attack Chain Analysis
+Phase 12 & 20 — Attack Chain Analysis
 
 Single vulnerabilities are overrated. Real compromise comes from chaining.
+Phase 12: initial chain detection from recon/vuln/exploit/pivot findings.
+Phase 20: advanced cross-phase chaining — combines ALL phases (14-19) findings
+          into multi-step compromise narratives with business impact scoring.
 
 This module:
-  1. Takes all findings from every previous phase
+  1. Takes all findings from every phase
   2. Applies rule-based chain detection for known multi-step patterns
-  3. Uses AI (Sonnet) to reason about novel chains the rules miss
-  4. Scores each chain by exploitability × impact
+  3. Uses AI Sonnet to reason about novel chains the rules miss
+  4. Phase 20 advanced chains: validated proof + persistence + detection gap analysis
+  5. Scores each chain by exploitability × impact × stealth
 """
 import json
 
@@ -144,11 +148,14 @@ def _detect_rule_chains(all_findings: list[dict]) -> list[dict]:
 
 
 def _score_chain(chain: dict) -> int:
-    """Score a chain 0–100 based on severity × confidence."""
-    sev_score = {"critical": 40, "high": 30, "medium": 20, "low": 10}.get(chain.get("severity", "medium"), 20)
-    conf_score = {"high": 30, "medium": 20, "low": 10}.get(chain.get("confidence", "medium"), 20)
-    steps_score = min(len(chain.get("chain", [])) * 10, 30)
-    return sev_score + conf_score + steps_score
+    """Score a chain 0–100 based on severity × confidence × stealth."""
+    sev_score    = {"critical": 40, "high": 30, "medium": 20, "low": 10}.get(chain.get("severity", "medium"), 20)
+    conf_score   = {"high": 30, "medium": 20, "low": 10}.get(chain.get("confidence", "medium"), 20)
+    steps_score  = min(len(chain.get("chain", [])) * 10, 30)
+    # Phase 20 stealth bonus — chains that bypass detection are more dangerous
+    stealth_bonus = 10 if chain.get("detection_bypass") else 0
+    validated_bonus = 10 if chain.get("validated") else 0
+    return sev_score + conf_score + steps_score + stealth_bonus + validated_bonus
 
 
 # ---------------------------------------------------------------------------
@@ -257,4 +264,122 @@ def run_chain_analysis(
         "critical":     sum(1 for c in chains if c.get("severity") == "critical"),
         "high":         sum(1 for c in chains if c.get("severity") == "high"),
         "top_chain":    chains[0] if chains else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 20 — Advanced Cross-Phase Chain Analysis
+# ---------------------------------------------------------------------------
+
+def run_advanced_chains(
+    target: str,
+    base_chains: list[dict],
+    validated_findings: list[dict] = None,
+    escalation_findings: list[dict] = None,
+    lateral_findings: list[dict] = None,
+    persistence_findings: list[dict] = None,
+    detection_gaps: list[dict] = None,
+    ai=None,
+) -> dict:
+    """
+    Phase 20: synthesise ALL phase findings into complete attack narratives.
+
+    Upgrades base_chains with:
+      - validation status (proof captured in Phase 15)
+      - escalation paths (Phase 16)
+      - lateral movement legs (Phase 17)
+      - persistence opportunities (Phase 18)
+      - detection gaps (Phase 19 poor_coverage findings)
+
+    Returns final scored chain list with full operator narrative.
+    """
+    # Mark chains where we have validated proof
+    validated_issues = {
+        f.get("proof", {}).get("impact", "") or f.get("finding", "")
+        for f in (validated_findings or [])
+    }
+    poor_detection = {f.get("issue", "") for f in (detection_gaps or [])}
+
+    enriched: list[dict] = []
+    for chain in base_chains:
+        c = dict(chain)
+        chain_text = " ".join(c.get("chain", [])).lower() + c.get("name", "").lower()
+
+        # Was this chain validated?
+        c["validated"] = any(
+            any(kw in chain_text for kw in v_issue.lower().split()[:3])
+            for v_issue in validated_issues if v_issue
+        )
+
+        # Does this chain benefit from a detection gap?
+        c["detection_bypass"] = any(
+            any(kw in chain_text for kw in gap.lower().split()[:3])
+            for gap in poor_detection if gap
+        )
+
+        # Persistence opportunity
+        persist_overlap = any(
+            any(kw in chain_text for kw in f.get("issue", "").lower().split()[:3])
+            for f in (persistence_findings or [])
+            if f.get("severity") in ("critical", "high")
+        )
+        if persist_overlap:
+            c.setdefault("persistence_note", "Persistence opportunity identified — see Phase 18 findings")
+
+        # Re-score with new bonuses
+        c["score"] = _score_chain(c)
+        enriched.append(c)
+
+    enriched.sort(key=lambda c: c["score"], reverse=True)
+
+    # AI: full attack narrative for top 3 chains
+    ai_narratives = None
+    if ai and ai.is_available() and enriched:
+        top3 = enriched[:3]
+        escalation_text = ""
+        if escalation_findings:
+            top_esc = [f.get("issue", "") for f in escalation_findings[:3]]
+            escalation_text = f"\nEscalation paths available: {'; '.join(top_esc)}"
+
+        lateral_text = ""
+        if lateral_findings:
+            top_lat = [f.get("issue", "") for f in lateral_findings[:3]]
+            lateral_text = f"\nLateral movement paths: {'; '.join(top_lat)}"
+
+        chains_json = json.dumps(
+            [{"name": c.get("name"), "severity": c.get("severity"),
+              "steps": c.get("chain", []), "validated": c.get("validated"),
+              "detection_bypass": c.get("detection_bypass")}
+             for c in top3],
+            indent=2
+        )[:2500]
+
+        prompt = (
+            "You are writing the final compromise narrative for a penetration test report.\n\n"
+            f"Target: {target}\n"
+            f"Top attack chains:\n{chains_json}\n"
+            f"{escalation_text}\n"
+            f"{lateral_text}\n\n"
+            "For each chain write a complete attack narrative that:\n"
+            "1. Describes the full compromise path from initial access to final objective\n"
+            "2. States exactly what a real attacker achieves\n"
+            "3. Estimates time-to-compromise for a skilled attacker\n"
+            "4. Rates detection likelihood (silent/noisy/very noisy)\n"
+            "5. States the single most effective defensive control\n\n"
+            "Write for a CISO audience — no jargon, focus on business risk.\n\n"
+            "Return ONLY valid JSON array (3 items):\n"
+            '[{"chain":"...", "narrative":"...", "attacker_objective":"...", '
+            '"time_to_compromise":"...", "detection":"silent|noisy|very noisy", '
+            '"key_control":"..."}]'
+        )
+        ai_narratives = ai.ask_json(prompt, model="deep")
+
+    return {
+        "chains":         enriched,
+        "total":          len(enriched),
+        "critical":       sum(1 for c in enriched if c.get("severity") == "critical"),
+        "validated":      sum(1 for c in enriched if c.get("validated")),
+        "silent_chains":  sum(1 for c in enriched if c.get("detection_bypass")),
+        "top_chain":      enriched[0] if enriched else None,
+        "ai_narratives":  ai_narratives,
     }

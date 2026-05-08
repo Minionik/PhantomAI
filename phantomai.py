@@ -18,9 +18,15 @@ from pipelines.exploitation.exploit_pipeline import run_exploit
 from pipelines.post_exploitation.post_pipeline import run_post
 from pipelines.auth.jwt_tester import find_and_test_jwts
 from pipelines.auth.authz_tester import run_authz
-from pipelines.attack_chain.chain_pipeline import run_chain_analysis
+from pipelines.attack_chain.chain_pipeline import run_chain_analysis, run_advanced_chains
 from pipelines.pivot.pivot_pipeline import run_pivot
+from pipelines.escalation.escalation_pipeline import run_escalation
+from pipelines.lateral.lateral_pipeline import run_lateral
+from pipelines.persistence.persistence_pipeline import run_persistence
+from pipelines.detection.detection_pipeline import run_detection
+from pipelines.exploitation.impact_validator import run_impact_validation
 from core.surface_classifier import classify_surfaces
+from core.exploit_prioritizer import build_exploit_queue
 from reports.html_reporter import generate_report, print_terminal_summary
 
 load_dotenv()
@@ -32,7 +38,7 @@ _BANNER = r"""
   ██╔═══╝ ██╔══██║██╔══██║██║╚██╗██║   ██║   ██║   ██║██║╚██╔╝██║██╔══██║██║
   ██║     ██║  ██║██║  ██║██║ ╚████║   ██║   ╚██████╔╝██║ ╚═╝ ██║██║  ██║██║
   ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝
-  AI-Powered Penetration Testing Framework  |  OWASP 2025  |  v2.0
+  AI-Powered Penetration Testing Framework  |  OWASP 2025  |  v3.0
 """
 
 
@@ -241,6 +247,151 @@ def main():
               f"[{top.get('severity','?').upper()}] (score {top.get('score',0)})")
         for i, step in enumerate(top.get("chain", [])[:3], 1):
             print(f"      {i}. {step}")
+
+    # ── Phase 14: Exploitation Strategy ─────────────────────────────────────
+    print("\n[*] Phase 14: Exploitation Strategy")
+    exploit_queue = build_exploit_queue(
+        all_findings=all_flat_findings,
+        surfaces=surfaces,
+        chain_results=chain_results,
+        ai=ai,
+    )
+    print(f"    Ranked targets : {exploit_queue['total']} findings prioritised "
+          f"({exploit_queue['critical_count']} critical, {exploit_queue['high_count']} high)")
+    if exploit_queue.get("surface_focus"):
+        sf = exploit_queue["surface_focus"]
+        print(f"    Surface focus  : {sf['surface']} (priority {sf['priority']})")
+    if exploit_queue.get("top_targets"):
+        t = exploit_queue["top_targets"][0]
+        print(f"    #1 target      : [{t['severity'].upper()}] {t['finding'][:60]}")
+        print(f"      Approach     : {t['approach'][:80]}")
+    if exploit_queue.get("ai_strategy") and isinstance(exploit_queue["ai_strategy"], list):
+        for item in exploit_queue["ai_strategy"][:2]:
+            decision = item.get("decision", "?").upper()
+            print(f"    AI → {decision:6s}  : {item.get('finding','?')[:55]}")
+
+    # ── Phase 15: Impact Validation ─────────────────────────────────────────
+    print("\n[*] Phase 15: Impact Validation")
+    # Collect SSRF-capable params
+    from urllib.parse import parse_qs as _parse_qs
+    ssrf_params_list = []
+    for u in all_params[:50]:
+        for p in _parse_qs(__import__("urllib.parse", fromlist=["urlparse"]).urlparse(u).query).keys():
+            if p.lower() in ["url","uri","src","redirect","next","return","callback","fetch","dest","host"]:
+                if p not in ssrf_params_list:
+                    ssrf_params_list.append(p)
+
+    impact_results = run_impact_validation(
+        exploit_queue=exploit_queue.get("queue", []),
+        jwt_findings=jwt_results.get("findings", {}),
+        pivot_findings=pivot_results,
+        ssrf_params=ssrf_params_list,
+        ai=ai,
+    )
+    print(f"    Validated findings : {impact_results['total_proven']} / "
+          f"{len(exploit_queue.get('queue', [])[:15])} tested (proof of impact captured)")
+    for v in impact_results.get("validated", [])[:3]:
+        proof = v.get("proof", {})
+        print(f"    ✓ PROVEN : {proof.get('impact','?')[:70]}")
+
+    # ── Phase 16: Privilege Escalation ──────────────────────────────────────
+    print("\n[*] Phase 16: Privilege Escalation")
+    escalation_results = run_escalation(
+        target=target,
+        pivot_data=pivot_results,
+        ai=ai,
+    )
+    esc_sum = escalation_results.get("summary", {})
+    print(f"    Escalation findings : {esc_sum.get('total',0)} "
+          f"({esc_sum.get('critical',0)} critical, {esc_sum.get('high',0)} high)")
+    if escalation_results.get("ai_path") and isinstance(escalation_results["ai_path"], dict):
+        access = escalation_results["ai_path"].get("access_level", "")
+        if access:
+            print(f"    Access achieved : {access}")
+
+    # ── Phase 17: Lateral Movement ───────────────────────────────────────────
+    print("\n[*] Phase 17: Lateral Movement")
+    lateral_results = run_lateral(
+        target=target,
+        live_hosts=recon.get("live_hosts", []),
+        ssrf_params=ssrf_params_list,
+        cicd_findings=pivot_results.get("cicd", []),
+        js_findings=js_findings,
+        ai=ai,
+    )
+    lat_sum = lateral_results.get("summary", {})
+    print(f"    Lateral findings : {lat_sum.get('total',0)} "
+          f"({lat_sum.get('critical',0)} critical)")
+    if lateral_results.get("ci_creds"):
+        print(f"    CI/CD secrets   : {len(lateral_results['ci_creds'])} extracted")
+    if lateral_results.get("ssrf_pivots"):
+        print(f"    SSRF pivots     : {len(lateral_results['ssrf_pivots'])} internal services reached")
+    if lateral_results.get("api_pivots"):
+        print(f"    API key pivots  : {len(lateral_results['api_pivots'])} valid keys confirmed")
+
+    # ── Phase 18: Persistence Analysis ──────────────────────────────────────
+    print("\n[*] Phase 18: Persistence Analysis")
+    persistence_results = run_persistence(
+        target=target,
+        jwt_findings=jwt_results.get("findings", {}),
+        ai=ai,
+    )
+    pers_sum = persistence_results.get("summary", {})
+    print(f"    Persistence findings : {pers_sum.get('total',0)} "
+          f"({pers_sum.get('critical',0)} critical, {pers_sum.get('high',0)} high)")
+    if persistence_results.get("default_creds"):
+        print(f"    [!!] Default credentials accepted: "
+              f"{persistence_results['default_creds'][0].get('username','?')}/"
+              f"{persistence_results['default_creds'][0].get('password','?')}")
+    if persistence_results.get("webhooks"):
+        reg = [w for w in persistence_results["webhooks"] if w.get("severity") == "high"]
+        if reg:
+            print(f"    Webhook registration : {len(reg)} endpoint(s) accept attacker URL")
+
+    # ── Phase 19: Detection & Logging Assessment ─────────────────────────────
+    print("\n[*] Phase 19: Detection & Logging Assessment")
+    detection_results = run_detection(
+        target=target,
+        api_urls=all_urls[:50],
+        ai=ai,
+    )
+    det_sum = detection_results.get("summary", {})
+    waf_name = det_sum.get("waf", "none detected")
+    print(f"    WAF              : {waf_name}")
+    print(f"    Poor coverage    : {det_sum.get('poor_coverage',0)} gap(s) "
+          f"| Good coverage : {det_sum.get('good_coverage',0)}")
+    if detection_results.get("ai_detection") and isinstance(detection_results["ai_detection"], dict):
+        maturity = detection_results["ai_detection"].get("maturity", "")
+        silent   = detection_results["ai_detection"].get("most_silent_technique", "")
+        if maturity:
+            print(f"    Detection maturity : {maturity}")
+        if silent:
+            print(f"    Most silent attack : {silent[:70]}")
+
+    # ── Phase 20: Advanced Attack Chaining ───────────────────────────────────
+    print("\n[*] Phase 20: Advanced Attack Chain Synthesis")
+    advanced_chains = run_advanced_chains(
+        target=target,
+        base_chains=chain_results.get("chains", []),
+        validated_findings=impact_results.get("validated", []),
+        escalation_findings=escalation_results.get("all_findings", []),
+        lateral_findings=lateral_results.get("all_findings", []),
+        persistence_findings=persistence_results.get("all_findings", []),
+        detection_gaps=detection_results.get("poor_detection", []),
+        ai=ai,
+    )
+    print(f"    Final chains : {advanced_chains['total']} "
+          f"({advanced_chains['critical']} critical | "
+          f"{advanced_chains['validated']} validated | "
+          f"{advanced_chains['silent_chains']} detection-evading)")
+    if advanced_chains.get("top_chain"):
+        top = advanced_chains["top_chain"]
+        print(f"    Top chain    : {top.get('name','?')} [score {top.get('score',0)}]"
+              + (" ✓PROVEN" if top.get("validated") else "")
+              + (" 🔇SILENT" if top.get("detection_bypass") else ""))
+    if advanced_chains.get("ai_narratives") and isinstance(advanced_chains["ai_narratives"], list):
+        for narr in advanced_chains["ai_narratives"][:1]:
+            print(f"    Narrative    : {narr.get('narrative','')[:100]}...")
 
     # ── Phase 5: Report Generation ───────────────────────────────────────────
     print("\n[*] Phase 5: Report Generation")
